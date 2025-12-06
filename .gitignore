@@ -1,1 +1,15 @@
+# prevent pandas shadowing
+pandas/
+src/pandas/
+
+# virtualenv noise
+venv/
+.env/
+.venv/
+
+# caches
+__pycache__/
+.ipynb_checkpoints/
+
+# misc
 .DS_Store

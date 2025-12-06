@@ -12,8 +12,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-import pandas as pd
 from pathlib import Path
+import pandas as pd
+
+# Abort immediately if a local stub shadows the real pandas
+repo_root = Path(__file__).resolve().parents[1]
+pandas_path = Path(pd.__file__).resolve()
+
+if repo_root in pandas_path.parents:
+    raise ImportError(
+        f"Pandas is being imported from inside the repository ({pandas_path}). "
+        f"This would shadow the real pandas library and cause major slowdowns. "
+        "Please remove any local 'pandas/' directories and reinstall dependencies."
+    )
 
 # Pre-define the expected schema. Categories are stored as ``object`` when
 # persisted to CSV so validation focuses on dtype *kinds* rather than exact
