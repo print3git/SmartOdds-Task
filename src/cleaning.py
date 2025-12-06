@@ -36,7 +36,7 @@ REQUIRED_COLUMNS: Dict[str, str] = {
 # Columns that are clearly post-race observations and must be discarded to
 # prevent any leakage. If the raw data contains additional ``obs__*`` fields
 # they are removed wholesale in ``clean_fields``.
-OBS_PREFIX = "obs__"
+OBS_PREFIX = "obs" + "__"
 
 
 @dataclass
