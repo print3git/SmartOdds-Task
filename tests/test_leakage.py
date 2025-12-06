@@ -13,8 +13,7 @@ def cleaned_df():
     df["race_id"] = pd.to_numeric(df["race_id"], errors="coerce").astype("Int64")
     df["horse_id"] = pd.to_numeric(df["horse_id"], errors="coerce").astype("Int64")
     df["n_runners"] = pd.to_numeric(df["n_runners"], errors="coerce").astype("Int64")
-    df["distance"] = pd.to_numeric(df["distance"], errors="coerce")
-    df["finish_position"] = pd.to_numeric(df["finish_position"], errors="coerce").astype("Int64")
+    df["race_distance"] = pd.to_numeric(df["race_distance"], errors="coerce")
     return df
 
 
@@ -24,7 +23,7 @@ def test_no_obs_columns_in_cleaned_data(cleaned_df):
 
 
 def test_only_expected_columns(cleaned_df):
-    expected = set(cleaning.SCHEMA.ordered_columns)
+    expected = set(cleaning.NON_LEAK_COLUMNS)
     assert set(cleaned_df.columns) == expected, "Unexpected columns present in cleaned data"
 
 
@@ -43,11 +42,9 @@ def test_cleaning_code_does_not_use_obs_predictors():
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             if node.value.startswith("obs__"):
                 obs_usage.append(node.value)
-    # Only allowed reference is the finish position column
-    assert set(obs_usage) <= {"obs__finish_position"}, "Unexpected obs__ references in cleaning logic"
+    assert set(obs_usage) == set(cleaning.SCHEMA.required_columns) - set(cleaning.NON_LEAK_COLUMNS)
 
 
 def test_no_future_columns_introduced(cleaned_df):
-    # finish_position is the only post-race field retained for supervision
-    future_like = [c for c in cleaned_df.columns if c not in cleaning.SCHEMA.required_columns]
+    future_like = [c for c in cleaned_df.columns if c not in cleaning.NON_LEAK_COLUMNS]
     assert not future_like, f"Found columns that should not exist: {future_like}"

@@ -10,11 +10,10 @@ def cleaned_df():
     df["race_id"] = pd.to_numeric(df["race_id"], errors="coerce").astype("Int64")
     df["horse_id"] = pd.to_numeric(df["horse_id"], errors="coerce").astype("Int64")
     df["n_runners"] = pd.to_numeric(df["n_runners"], errors="coerce").astype("Int64")
-    df["distance"] = pd.to_numeric(df["distance"], errors="coerce")
-    df["finish_position"] = pd.to_numeric(df["finish_position"], errors="coerce").astype("Int64")
+    df["race_distance"] = pd.to_numeric(df["race_distance"], errors="coerce")
     df["age"] = pd.to_numeric(df["age"], errors="coerce")
     df["draw"] = pd.to_numeric(df["draw"], errors="coerce")
-    df["weight_lbs"] = pd.to_numeric(df["weight_lbs"], errors="coerce")
+    df["carried_weight"] = pd.to_numeric(df["carried_weight"], errors="coerce")
     return df
 
 
@@ -22,9 +21,11 @@ def test_race_level_invariants(cleaned_df):
     grouped = cleaned_df.groupby("race_id")
     for race_id, group in grouped:
         assert group["date"].nunique(dropna=True) == 1, f"Date mismatch in race {race_id}"
-        assert group["racecourse"].nunique(dropna=True) == 1, f"Racecourse mismatch in race {race_id}"
+        assert (
+            group["racecourse_name"].nunique(dropna=True) == 1
+        ), f"Racecourse mismatch in race {race_id}"
         assert group["race_type_simple"].nunique(dropna=True) == 1, f"Type mismatch in race {race_id}"
-        assert group["distance"].nunique(dropna=True) == 1, f"Distance mismatch in race {race_id}"
+        assert group["race_distance"].nunique(dropna=True) == 1, f"Distance mismatch in race {race_id}"
 
 
 def test_runner_count_matches(cleaned_df):
@@ -35,7 +36,7 @@ def test_runner_count_matches(cleaned_df):
 
 
 def test_numeric_fields_positive(cleaned_df):
-    numeric_positive = ["distance", "age", "weight_lbs", "draw"]
+    numeric_positive = ["race_distance", "age", "carried_weight", "draw"]
     for col in numeric_positive:
         assert (cleaned_df[col] > 0).all(), f"Non-positive values found in {col}"
     assert (cleaned_df["n_runners"] > 0).all(), "n_runners must be positive"
