@@ -15,11 +15,14 @@ from typing import Dict, List
 from pathlib import Path
 import pandas as pd
 
-# Abort immediately if a local stub shadows the real pandas
+# Abort immediately if a local stub shadows the real pandas. Only treat the
+# repository-level ``pandas/`` or ``src/pandas/`` directories as problematic;
+# virtualenvs created inside the repo (``.venv/``) should not trigger.
 repo_root = Path(__file__).resolve().parents[1]
 pandas_path = Path(pd.__file__).resolve()
 
-if repo_root in pandas_path.parents:
+local_stub_dirs = {repo_root / "pandas", repo_root / "src" / "pandas"}
+if any(stub in pandas_path.parents for stub in local_stub_dirs):
     raise ImportError(
         f"Pandas is being imported from inside the repository ({pandas_path}). "
         f"This would shadow the real pandas library and cause major slowdowns. "
