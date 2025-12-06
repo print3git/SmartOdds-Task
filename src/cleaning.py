@@ -10,7 +10,7 @@ outcomes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List
+from typing import Dict, List
 
 import pandas as pd
 from pathlib import Path
@@ -19,18 +19,35 @@ from pathlib import Path
 # persisted to CSV so validation focuses on dtype *kinds* rather than exact
 # pandas extension types.
 REQUIRED_COLUMNS: Dict[str, str] = {
+    "date": "object",
+    "racecourse_country": "object",
+    "racecourse_name": "object",
+    "race_time": "object",
     "race_id": "int",
-    "horse_id": "int",
-    "date": "datetime64[ns]",
-    "race_time": "datetime64[ns]",
-    "racecourse": "object",
+    "race_distance": "float",
+    "race_type": "object",
     "race_type_simple": "object",
-    "distance": "float",
+    "going_clean": "object",
     "n_runners": "int",
-    "draw": "float",
-    "age": "float",
-    "weight_lbs": "float",
-    "finish_position": "Int64",
+    "horse_id": "int",
+    "horse_name": "object",
+    "age": "int",
+    "official_rating": "int",
+    "carried_weight": "float",
+    "draw": "int",
+    "jockey_id": "int",
+    "jockey_name": "object",
+    "trainer_id": "int",
+    "trainer_name": "object",
+    "ltp_5min": "float",
+    "obs__bsp": "float",
+    "obs__racing_post_rating": "float",
+    "obs__uposition": "int",
+    "obs__is_winner": "int",
+    "obs__top_speed": "float",
+    "obs__distance_to_winner": "float",
+    "obs__pos_prize": "float",
+    "obs__completion_time": "float",
 }
 
 # Columns that are clearly post-race observations and must be discarded to
@@ -52,6 +69,9 @@ class SchemaConfig:
 
 
 SCHEMA = SchemaConfig(required_columns=REQUIRED_COLUMNS)
+
+# Columns safe for modelling/evaluation that exclude any post-race observations.
+NON_LEAK_COLUMNS: List[str] = [col for col in SCHEMA.ordered_columns if not col.startswith(OBS_PREFIX)]
 
 
 # ---------------------------------------------------------------------------
@@ -75,16 +95,35 @@ def load_raw_data(path: str = "data/raw/test_dataset.csv") -> pd.DataFrame:
     """
 
     dtype_map = {
-        "race_id": "int64",
-        "horse_id": "int64",
-        "racecourse": "string",
+        "date": "string",
+        "racecourse_country": "string",
+        "racecourse_name": "string",
+        "race_time": "string",
+        "race_id": "Int64",
+        "race_distance": "float64",
+        "race_type": "string",
         "race_type_simple": "string",
-        "distance": "float64",
+        "going_clean": "string",
         "n_runners": "Int64",
-        "draw": "float64",
-        "age": "float64",
-        "weight_lbs": "float64",
-        # obs__ columns are not coerced here intentionally.
+        "horse_id": "Int64",
+        "horse_name": "string",
+        "age": "Int64",
+        "official_rating": "Int64",
+        "carried_weight": "float64",
+        "draw": "Int64",
+        "jockey_id": "Int64",
+        "jockey_name": "string",
+        "trainer_id": "Int64",
+        "trainer_name": "string",
+        "ltp_5min": "float64",
+        "obs__bsp": "float64",
+        "obs__racing_post_rating": "float64",
+        "obs__uposition": "Int64",
+        "obs__is_winner": "Int64",
+        "obs__top_speed": "float64",
+        "obs__distance_to_winner": "float64",
+        "obs__pos_prize": "float64",
+        "obs__completion_time": "float64",
     }
 
     df = pd.read_csv(path, dtype=dtype_map)
@@ -118,6 +157,9 @@ def validate_schema(df: pd.DataFrame) -> None:
                 raise ValueError(
                     f"Column {col} must be datetime-like or string, found {df[col].dtype}"
                 )
+        elif expected in {"string", "object"}:
+            if not pd.api.types.is_object_dtype(df[col]) and df[col].dtype.name != "string":
+                raise ValueError(f"Column {col} must be string-like, found {df[col].dtype}")
         elif expected == "Int64":
             if not (
                 df[col].dtype == "Int64"
@@ -131,9 +173,6 @@ def validate_schema(df: pd.DataFrame) -> None:
         elif expected == "float":
             if not (pd.api.types.is_float_dtype(df[col]) or pd.api.types.is_object_dtype(df[col])):
                 raise ValueError(f"Column {col} must be float-like, found {df[col].dtype}")
-        elif expected == "object":
-            if kind not in ("O", "U", "S"):
-                raise ValueError(f"Column {col} must be object-like, found {df[col].dtype}")
 
     if df.duplicated(subset=["race_id", "horse_id"]).any():
         raise ValueError("Duplicate (race_id, horse_id) pairs detected")
@@ -143,88 +182,13 @@ def validate_schema(df: pd.DataFrame) -> None:
 # Cleaning helpers
 # ---------------------------------------------------------------------------
 
-def _parse_weight(value: object) -> float | None:
-    """Parse weights expressed as pounds or ``stones-pounds`` strings."""
-    if pd.isna(value):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value)
-    if "-" in text:
-        try:
-            stones, pounds = text.split("-")
-            return float(stones) * 14 + float(pounds)
-        except ValueError:
-            return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
+def _safe_numeric(series: pd.Series, dtype: str) -> pd.Series:
+    """Convert a series to numeric with safe coercion and the requested dtype."""
 
-
-def _parse_distance(value: object) -> float | None:
-    """Convert race distance strings to yards where possible."""
-    if pd.isna(value):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    text = str(value).strip().lower()
-    # Support composite distances like "2m4f110y"
-    yards = 0.0
-    num = ""
-    for ch in text:
-        if ch.isdigit() or ch == ".":
-            num += ch
-            continue
-        if ch in {"m", "f", "y"}:
-            try:
-                magnitude = float(num)
-            except ValueError:
-                magnitude = 0.0
-            if ch == "m":
-                yards += magnitude * 1760
-            elif ch == "f":
-                yards += magnitude * 220
-            elif ch == "y":
-                yards += magnitude
-            num = ""
-    if num:
-        try:
-            yards += float(num)
-        except ValueError:
-            pass
-    return yards if yards > 0 else None
-
-
-def _standardize_finish(value: object) -> float | None:
-    """Normalise finish positions, mapping non-finishers to ``None``."""
-    if pd.isna(value):
-        return None
-    non_finish_codes: Iterable[str] = {
-        "pu",
-        "ur",
-        "f",
-        "bd",
-        "ro",
-        "ref",
-        "voi",
-        "lft",
-        "su",
-        "dsq",
-        "dnf",
-        "ot",
-        "otd",
-        "bf",
-    }
-    text = str(value).strip().lower()
-    if text in non_finish_codes:
-        return None
-    try:
-        num = float(text)
-        return num if num > 0 else None
-    except ValueError:
-        return None
+    coerced = pd.to_numeric(series, errors="coerce")
+    if dtype == "Int64":
+        return coerced.astype("Int64")
+    return coerced.astype(dtype)
 
 
 def clean_fields(df: pd.DataFrame) -> pd.DataFrame:
@@ -239,75 +203,74 @@ def clean_fields(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
 
-    # Drop all obs__* columns to prevent leakage, but capture finish position
-    finish_source = None
-    for col in list(df.columns):
-        if col.startswith(OBS_PREFIX):
-            if col == "obs__finish_position" and finish_source is None:
-                finish_source = col
-                continue
-            df = df.drop(columns=col)
-
-    if finish_source is None and "finish_position" not in df.columns:
-        raise ValueError("Finish position column missing; expected obs__finish_position or finish_position")
-
     # Parse date and time
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["race_time"] = pd.to_datetime(df["race_time"], errors="coerce")
 
     # Numeric conversions
-    df["age"] = pd.to_numeric(df["age"], errors="coerce")
-    df["draw"] = pd.to_numeric(df["draw"], errors="coerce")
-    df["weight_lbs"] = df["weight_lbs"].apply(_parse_weight)
-    df["weight_lbs"] = pd.to_numeric(df["weight_lbs"], errors="coerce")
-    df["distance"] = df["distance"].apply(_parse_distance)
-    df["distance"] = pd.to_numeric(df["distance"], errors="coerce")
-    df["n_runners"] = pd.to_numeric(df["n_runners"], errors="coerce").astype("Int64")
+    numeric_int = ["race_id", "horse_id", "n_runners", "age", "official_rating", "draw", "jockey_id", "trainer_id"]
+    for col in numeric_int:
+        df[col] = _safe_numeric(df[col], "Int64")
 
-    # Finish positions
-    if finish_source:
-        finish_values = df[finish_source]
-    else:
-        finish_values = df["finish_position"]
-    df["finish_position"] = finish_values.apply(_standardize_finish).astype("Float64")
-    df["finish_position"] = df["finish_position"].round().astype("Int64")
-    if finish_source:
-        df = df.drop(columns=finish_source)
+    numeric_float = [
+        "race_distance",
+        "carried_weight",
+        "ltp_5min",
+        "obs__bsp",
+        "obs__racing_post_rating",
+        "obs__top_speed",
+        "obs__distance_to_winner",
+        "obs__pos_prize",
+        "obs__completion_time",
+    ]
+    for col in numeric_float:
+        df[col] = _safe_numeric(df[col], "float64")
+
+    # Post-race observation of finishing position
+    df["obs__uposition"] = _safe_numeric(df["obs__uposition"], "Int64")
+    df["obs__is_winner"] = _safe_numeric(df["obs__is_winner"], "Int64")
 
     # Remove rows with clearly invalid identifiers or missing essentials
-    essential_cols = ["race_id", "horse_id", "date", "race_time", "n_runners", "distance"]
+    essential_cols = [
+        "race_id",
+        "horse_id",
+        "date",
+        "race_time",
+        "n_runners",
+        "race_distance",
+    ]
     df = df.dropna(subset=essential_cols)
 
     # Drop impossible or invalid values
-    df = df[df["age"] > 0]
-    df = df[df["distance"] > 0]
+    df = df[df["race_distance"] > 0]
     df = df[df["n_runners"] > 0]
-
-    # Cast identifiers to integer
-    df["race_id"] = pd.to_numeric(df["race_id"], errors="coerce").astype("Int64")
-    df["horse_id"] = pd.to_numeric(df["horse_id"], errors="coerce").astype("Int64")
+    if "age" in df:
+        df = df[df["age"] > 0]
 
     df = df.dropna(subset=["race_id", "horse_id"])
 
-    # Ensure ordering of columns for deterministic output
-    for col in SCHEMA.ordered_columns:
+    non_leak_columns = [col for col in SCHEMA.ordered_columns if not col.startswith(OBS_PREFIX)]
+    for col in non_leak_columns:
         if col not in df.columns:
             df[col] = pd.NA
-    return df[SCHEMA.ordered_columns]
+
+    # Ensure ordering of columns for deterministic output and remove obs__* fields
+    cleaned = df[non_leak_columns]
+    return cleaned
 
 
 def validate_race_invariants(df: pd.DataFrame) -> None:
     """Validate race-level invariants across all rows.
 
     Invariants enforced for each ``race_id``:
-    - date, racecourse, race_type_simple, and distance are constant
+    - date, racecourse_name, race_type_simple, and race_distance are constant
     - number of rows equals ``n_runners``
-    - finish positions are within ``[1, n_runners]`` or missing for non-finishers
+    - observed finishing positions are within ``[1, n_runners]`` or missing for non-finishers
     """
 
     grouped = df.groupby("race_id")
     for race_id, group in grouped:
-        for field in ["date", "racecourse", "race_type_simple", "distance"]:
+        for field in ["date", "racecourse_name", "race_type_simple", "race_distance"]:
             if group[field].nunique(dropna=True) > 1:
                 raise ValueError(f"Race {race_id} has inconsistent {field}")
 
@@ -315,7 +278,10 @@ def validate_race_invariants(df: pd.DataFrame) -> None:
         if len(group) != expected:
             raise ValueError(f"Race {race_id} expected {expected} runners but found {len(group)}")
 
-        finish_vals = group["finish_position"].dropna().astype(int)
+        finish_vals = group.get("obs__uposition")
+        if finish_vals is None:
+            continue
+        finish_vals = finish_vals.dropna().astype(int)
         if not finish_vals.empty:
             if finish_vals.min() < 1 or finish_vals.max() > expected:
                 raise ValueError(f"Race {race_id} has invalid finish positions")
@@ -334,6 +300,7 @@ def save_cleaned_data(df: pd.DataFrame, path: str = "data/processed/clean.csv") 
 
     path_obj = Path(path)
     path_obj.parent.mkdir(parents=True, exist_ok=True)
+    df = df[[col for col in NON_LEAK_COLUMNS if col in df.columns]]
     df.to_csv(path_obj, index=False)
 
 
